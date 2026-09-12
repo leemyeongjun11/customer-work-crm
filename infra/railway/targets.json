@@ -1,0 +1,15 @@
+{
+  "projectId": "492bf8bc-c387-400a-beab-4f2f0f84489d",
+  "projectName": "balanced-balance",
+  "region": "asia-southeast1-eqsg3a",
+  "environments": {
+    "staging": "73a6c6c9-d1eb-46e3-87c1-d714a150e858",
+    "production": "9818115a-2772-4432-9723-c3165ae17082"
+  },
+  "services": {
+    "api": "f40820b4-f252-42cc-b3fe-8fdf6c4bc1d5",
+    "web": "56d8c813-fb5b-4a3c-a89f-897469e52e7d",
+    "worker": "87cb390d-760b-405f-b59e-cb17150492b2",
+    "scheduler": "66b65fb6-2c5b-4010-a9c1-2ccd3d633f62"
+  }
+}

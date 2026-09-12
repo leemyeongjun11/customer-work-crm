@@ -1,0 +1,118 @@
+name: 운영 배포 실행
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 시험 환경을 확인했으며 현재 main 버전의 운영 배포를 실행합니다
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: crm-railway-production
+  cancel-in-progress: false
+env:
+  PRODUCTION_APPROVER: ${{ vars.PRODUCTION_APPROVER }}
+  PRODUCTION_CONFIRMED: ${{ inputs.confirm }}
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify owner manual request
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-production-approval.mjs
+      - name: Require production readiness flags
+        env:
+          APP_READY: ${{ vars.CRM_APP_READY }}
+          DEPLOY_ENABLED: ${{ vars.CRM_PRODUCTION_DEPLOY_ENABLED }}
+        run: |
+          if [[ "$APP_READY" != "true" || "$DEPLOY_ENABLED" != "true" ]]; then
+            echo "::error::Production is not enabled. Finish runtime, account, database and staging checks first."
+            exit 1
+          fi
+  validate:
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: crm-ci-only
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      CRM_TEST_DATABASE_URL: postgresql://postgres:crm-ci-only@127.0.0.1:5432/crm_ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: node scripts/check-infra.mjs --require-app
+      - run: bash scripts/ci-app.sh
+      - name: Build all deployable containers
+        run: |
+          node scripts/write-release.mjs
+          for service in api worker scheduler web; do
+            docker build --file "apps/$service/Dockerfile" --tag "crm-$service:$GITHUB_SHA" .
+          done
+  deploy:
+    needs: [authorize, validate]
+    if: >-
+      github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      inputs.confirm && github.actor == vars.PRODUCTION_APPROVER &&
+      github.triggering_actor == vars.PRODUCTION_APPROVER
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: node scripts/prepare-deployment.mjs production
+      - name: Validate deployment configuration
+        env:
+          RAILWAY_TOKEN: ${{ secrets.PRODUCTION_RAILWAY_TOKEN }}
+          OPS_READ_TOKEN: ${{ secrets.PRODUCTION_OPS_READ_TOKEN }}
+          CRM_BASE_URL: ${{ vars.PRODUCTION_CRM_BASE_URL }}
+        run: node scripts/check-deploy-config.mjs
+      - name: Install pinned Railway CLI
+        run: |
+          version=$(node -p 'JSON.parse(require("fs").readFileSync("infra/railway/services.json", "utf8")).railwayCliVersion')
+          npm install --global "@railway/cli@$version"
+      - name: Require the same source running in a successful staging deployment
+        env:
+          CRM_BASE_URL: ${{ vars.STAGING_CRM_BASE_URL }}
+          OPS_READ_TOKEN: ${{ secrets.STAGING_OPS_READ_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-staging-release.mjs
+      - name: Recheck owner and current main immediately before deployment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-production-approval.mjs
+      - name: Deploy this commit
+        env:
+          RAILWAY_TOKEN: ${{ secrets.PRODUCTION_RAILWAY_TOKEN }}
+        run: node scripts/deploy-railway.mjs
+      - name: Confirm running release
+        env:
+          CRM_BASE_URL: ${{ vars.PRODUCTION_CRM_BASE_URL }}
+          OPS_READ_TOKEN: ${{ secrets.PRODUCTION_OPS_READ_TOKEN }}
+        run: node scripts/release-check.mjs
