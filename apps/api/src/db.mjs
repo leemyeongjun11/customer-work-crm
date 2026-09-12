@@ -38,9 +38,11 @@ export async function openDatabase({ url = process.env.DATABASE_URL, directory =
     };
   }
   const migration = await readFile(new URL('./schema.sql', import.meta.url), 'utf8');
+  const deploymentMigration = await readFile(new URL('./deployment-schema.sql', import.meta.url), 'utf8');
   await db.transaction(async tx => {
+    if (db.driver === 'postgres') await tx.query('SELECT pg_advisory_xact_lock(81402026)');
     // Both drivers accept each DDL statement individually inside one transaction.
-    for (const sql of migration.split(';').map(s => s.trim()).filter(Boolean)) await tx.query(sql);
+    for (const sql of `${migration}\n${deploymentMigration}`.split(';').map(s => s.trim()).filter(Boolean)) await tx.query(sql);
   });
   return db;
 }

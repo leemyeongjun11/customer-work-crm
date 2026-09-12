@@ -71,6 +71,8 @@ jobs:
           for service in api worker scheduler web; do
             docker build --file "apps/$service/Dockerfile" --tag "crm-$service:$GITHUB_SHA" .
           done
+      - name: Verify containers against a disposable PostgreSQL database
+        run: node scripts/smoke-containers.mjs
   deploy:
     needs: [authorize, validate]
     if: >-

@@ -18,7 +18,7 @@ export async function changePage(db,user,cursor){
   });
 }
 
-export function createChangeStreams(db,{clock=()=>new Date(),pollMs=1000}={}){
+export function createChangeStreams(db,{clock=()=>new Date(),pollMs=1000,secureSession=false}={}){
   const active=new Set(),counts=new Map();
   return {
     async open(req,res,user){
@@ -35,7 +35,7 @@ export function createChangeStreams(db,{clock=()=>new Date(),pollMs=1000}={}){
       res.write('retry: 3000\n\n');
       async function poll(){
         try{
-          const current=await authenticate(db,req.headers.cookie,clock());
+          const current=await authenticate(db,req.headers.cookie,clock(),secureSession);
           if(current.tenantId!==user.tenantId||current.role!==user.role){send('session-expired',{});return stop();}
           const page=await changePage(db,current,cursor);
           if(ended)return;
