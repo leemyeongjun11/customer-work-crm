@@ -1,0 +1,15 @@
+{
+  "name": "@crm/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "setup": "node src/setup.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "pg": "8.23.0"
+  }
+}

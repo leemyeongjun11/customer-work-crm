@@ -1,0 +1,137 @@
+name: CRM CI and deployment
+
+on:
+  pull_request:
+    branches: [staging, main]
+  push:
+    branches: [staging, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: crm-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - name: Check UI types, business rules, API persistence and web build
+        run: pnpm check
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: crm-ci-only
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CRM_TEST_DATABASE_URL: postgresql://postgres:crm-ci-only@127.0.0.1:5432/crm_ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.19.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:postgres
+
+  infrastructure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node scripts/check-infra.mjs
+      - run: node --test scripts/release-check.test.mjs
+      - run: node --test scripts/check-production-approval.test.mjs
+      - name: Main accepts release PRs from this repository staging branch
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: '[[ "$HEAD_BRANCH" == "staging" && "$HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]'
+
+  application:
+    needs: [infrastructure, ui, postgres]
+    if: vars.CRM_APP_READY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: crm-ci-only
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      CRM_TEST_DATABASE_URL: postgresql://postgres:crm-ci-only@127.0.0.1:5432/crm_ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node scripts/check-infra.mjs --require-app
+      - name: Run real application checks (must be provided with the application)
+        run: bash scripts/ci-app.sh
+      - name: Build all deployable containers
+        run: |
+          node scripts/write-release.mjs
+          for service in api worker scheduler web; do
+            docker build --file "apps/$service/Dockerfile" --tag "crm-$service:$GITHUB_SHA" .
+          done
+
+  staging:
+    needs: application
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      vars.CRM_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      target: staging
+    secrets: inherit
+
+  production:
+    needs: application
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.CRM_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      target: production
+    secrets: inherit

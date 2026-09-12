@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.venv/
+__pycache__/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+artifacts/
+.pnpm-store/
+.railway/
+release.json
+railway.json
+.local-data/

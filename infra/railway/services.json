@@ -1,0 +1,9 @@
+{
+  "railwayCliVersion": "5.54.0",
+  "services": [
+    { "name": "api", "directory": "apps/api", "serviceVariable": "RAILWAY_API_SERVICE_ID" },
+    { "name": "worker", "directory": "apps/worker", "serviceVariable": "RAILWAY_WORKER_SERVICE_ID" },
+    { "name": "scheduler", "directory": "apps/scheduler", "serviceVariable": "RAILWAY_SCHEDULER_SERVICE_ID" },
+    { "name": "web", "directory": "apps/web", "serviceVariable": "RAILWAY_WEB_SERVICE_ID" }
+  ]
+}

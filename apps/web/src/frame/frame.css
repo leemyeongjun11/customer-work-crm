@@ -1,0 +1,15 @@
+.frame-page { min-width: 0; }
+.frame-page [data-slot="card"] { min-width: 0; }
+.frame-page label { min-width: 0; }
+.frame-page input, .frame-page select, .frame-page textarea { max-width: 100%; min-width: 0; }
+.frame-page button { white-space: normal; height: auto; min-height: 2.5rem; }
+.frame-page h1, .frame-page h2, .frame-page p { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .topbar .demo-pill { display: none; }
+  .topbar .top-actions { flex-shrink: 0; }
+  .frame-page [data-slot="card"] { padding: 1rem; }
+  [data-slot="dialog-content"] { max-height: 88dvh; overflow-y: auto; }
+  .frame-page input, .frame-page textarea, .frame-page select { font-size: 16px; }
+  .detail-tabs { overflow-x: auto; }
+  .detail-tabs button { flex-shrink: 0; }
+}

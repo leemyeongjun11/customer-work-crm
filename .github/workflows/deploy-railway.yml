@@ -1,0 +1,139 @@
+name: Deploy CRM to Railway
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      target:
+        description: staging branch for staging; main branch for production (owner approval required)
+        type: choice
+        options: [staging, production]
+        default: staging
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: crm-railway-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      vars.CRM_APP_READY == 'true' && vars.CRM_DEPLOY_ENABLED == 'true' &&
+      ((inputs.target == 'staging' && github.ref == 'refs/heads/staging') ||
+       (inputs.target == 'production' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: crm-ci-only
+          POSTGRES_DB: crm_ci
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      CRM_TEST_DATABASE_URL: postgresql://postgres:crm-ci-only@127.0.0.1:5432/crm_ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Validate target
+        env:
+          TARGET: ${{ inputs.target }}
+        run: '[[ "$TARGET" == "staging" || "$TARGET" == "production" ]]'
+      - run: node scripts/check-infra.mjs --require-app
+      - run: node --test scripts/release-check.test.mjs
+      - run: node --test scripts/check-production-approval.test.mjs
+      - run: bash scripts/ci-app.sh
+      - name: Build the selected release
+        run: |
+          node scripts/write-release.mjs
+          for service in api worker scheduler web; do
+            docker build --file "apps/$service/Dockerfile" --tag "crm-$service:$GITHUB_SHA" .
+          done
+
+  qualify-staging:
+    needs: validate
+    if: inputs.target == 'production'
+    environment: staging-verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Require identical source content to be running successfully in staging
+        env:
+          CRM_BASE_URL: ${{ vars.CRM_BASE_URL }}
+          OPS_READ_TOKEN: ${{ secrets.OPS_READ_TOKEN }}
+        run: node scripts/release-check.mjs --qualify-staging
+
+  deploy:
+    needs: [validate, qualify-staging]
+    if: >-
+      always() && !cancelled() && needs.validate.result == 'success' &&
+      (inputs.target == 'staging' || needs.qualify-staging.result == 'success')
+    environment: ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Fail closed unless the owner explicitly approved this production run
+        if: inputs.target == 'production'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PRODUCTION_APPROVER: ${{ vars.PRODUCTION_APPROVER }}
+        run: node scripts/check-production-approval.mjs
+      - name: Validate deployment configuration
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          OPS_READ_TOKEN: ${{ secrets.OPS_READ_TOKEN }}
+          CRM_BASE_URL: ${{ vars.CRM_BASE_URL }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_API_SERVICE_ID: ${{ vars.RAILWAY_API_SERVICE_ID }}
+          RAILWAY_WORKER_SERVICE_ID: ${{ vars.RAILWAY_WORKER_SERVICE_ID }}
+          RAILWAY_SCHEDULER_SERVICE_ID: ${{ vars.RAILWAY_SCHEDULER_SERVICE_ID }}
+          RAILWAY_WEB_SERVICE_ID: ${{ vars.RAILWAY_WEB_SERVICE_ID }}
+        run: |
+          for name in RAILWAY_TOKEN OPS_READ_TOKEN CRM_BASE_URL RAILWAY_ENVIRONMENT_ID RAILWAY_API_SERVICE_ID RAILWAY_WORKER_SERVICE_ID RAILWAY_SCHEDULER_SERVICE_ID RAILWAY_WEB_SERVICE_ID; do
+            if [[ -z "${!name}" ]]; then echo "::error::Missing $name"; exit 1; fi
+          done
+      - name: Install pinned Railway CLI
+        run: |
+          version=$(node -p 'JSON.parse(require("fs").readFileSync("infra/railway/services.json", "utf8")).railwayCliVersion')
+          npm install --global "@railway/cli@$version"
+      - name: Deploy this commit
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
+          RAILWAY_API_SERVICE_ID: ${{ vars.RAILWAY_API_SERVICE_ID }}
+          RAILWAY_WORKER_SERVICE_ID: ${{ vars.RAILWAY_WORKER_SERVICE_ID }}
+          RAILWAY_SCHEDULER_SERVICE_ID: ${{ vars.RAILWAY_SCHEDULER_SERVICE_ID }}
+          RAILWAY_WEB_SERVICE_ID: ${{ vars.RAILWAY_WEB_SERVICE_ID }}
+        run: node scripts/deploy-railway.mjs
+      - name: Confirm running release, not just a successful build
+        env:
+          CRM_BASE_URL: ${{ vars.CRM_BASE_URL }}
+          OPS_READ_TOKEN: ${{ secrets.OPS_READ_TOKEN }}
+        run: node scripts/release-check.mjs
