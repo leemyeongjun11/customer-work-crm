@@ -53,7 +53,7 @@ export async function waitForRelease({ baseUrl, token, revision, releaseId, sour
             isExpectedRelease(w, expectedRevision, expectedRun, 'web') &&
             isExpectedRelease(a, expectedRevision, expectedRun, 'api') && readyComponents(c, expectedRevision, expectedRun)) {
           console.log('Expected web/API release and live worker/scheduler heartbeats verified.');
-          return;
+          return { revision: expectedRevision, sourceTree, releaseId: expectedRun };
         }
       }
     } catch {

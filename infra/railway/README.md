@@ -2,21 +2,23 @@
 
 이 폴더는 **앱 연결용 배포 설정**이다. 현재 `apps/web`에 로컬 프레임 검수용 화면이 있으며 [프로젝트 README](../../README.md)에 따라 실행할 수 있다. 운영용 API·Worker·Scheduler·인증·DB 연결은 아직 구현 전이므로 워크플로의 배포 단계는 기본 비활성이다. 설계는 [싱가포르·실시간 문의·승인 배포 구조](../../docs/04b-railway-scalable-architecture.md)를 따른다.
 
-2026-09-13 갱신: 로컬 API 인증·저장과 예약/처리 모듈을 구현했으며 PGlite 환경에서는 한 프로세스에서 실행한다. 위 ‘운영용 미구현’은 독립 배포 서비스와 실제 외부 연동에 해당한다. 아래 이미지·실행 식별·readiness·본인 승인 계약을 충족하기 전에는 배포 플래그를 활성화하지 않는다. 사용자의 GitHub·Railway 계정은 아직 준비 전이다.
+2026-09-13 갱신: 로컬 API 인증·저장과 예약/처리 모듈을 구현했으며 PGlite 환경에서는 한 프로세스에서 실행한다. 위 ‘운영용 미구현’은 독립 배포 서비스와 실제 외부 연동에 해당한다. 아래 이미지·실행 식별·readiness·본인 승인 계약을 충족하기 전에는 배포 플래그를 활성화하지 않는다. GitHub 비공개 저장소의 main/staging 업로드와 Railway 계정·프로젝트 생성은 완료했다. 빈 API 서비스 지역 설정을 진행 중이며 실제 앱 배포는 아직 없다.
 
 ## 파일
 
 | 파일 | 용도 |
 |---|---|
-| `.github/workflows/ci.yml` | staging/main PR·push 검사, staging 자동 배포, main 운영 승인 절차 연결 |
-| `.github/workflows/deploy-railway.yml` | 브랜치별 배포, 동일 소스의 staging 확인, production 본인 승인 후 배포 |
+| `.github/workflows/ci.yml` | staging/main PR·push 검사와 staging 자동 배포 |
+| `.github/workflows/deploy-railway.yml` | CI 성공 후 staging만 배포하는 재사용 workflow |
+| `.github/workflows/deploy-production.yml` | 본인 수동 실행·현재 main·동일 소스의 시험 배포 성공 확인 후 운영 배포 |
 | `infra/railway/{web,api,worker,scheduler}.json` | 서비스별 Dockerfile과 배포 준비 검사 |
 | `infra/railway/services.json` | 배포 순서, 서비스 식별 변수, 고정 CLI 버전 |
 | `scripts/check-infra.mjs` | 설정 일관성 및 앱 준비 검사 |
 | `scripts/deploy-railway.mjs` | 선택 커밋의 추적 파일만 묶어 Railway에 배포 |
 | `scripts/release-check.mjs` | 실제 실행 버전과 Worker/Scheduler 상태 확인 |
 | `scripts/write-release.mjs` | 커밋·소스 내용·실행 번호로 배포 식별 파일 생성 |
-| `scripts/check-production-approval.mjs` | 본인의 production 승인 기록 확인. 없거나 조회 실패면 배포 중단 |
+| `scripts/check-production-approval.mjs` | 본인 수동 실행과 현재 main 확인. 불일치·재실행·조회 실패 시 중단 |
+| `scripts/check-staging-release.mjs` | 실제 시험 환경의 동일 소스와 성공한 CI·배포 기록 확인 |
 
 ## 1. 실제 앱이 제공해야 하는 계약
 
@@ -56,7 +58,7 @@ scripts/ci-app.sh
 
 90초 이상 신호가 없는 인스턴스는 활성 목록에서 정리하되 장애 이력은 보관한다. 각 역할의 활성 인스턴스가 하나 이상이고 모두 같은 배포 버전이어야 CD 검사가 통과한다. 이 검사는 모든 설정된 복제 수나 모든 Web 복제본을 전수 확인하는 검사는 아니며, 실제 복제 수 점검·부하 검사는 별도 운영 검증이다.
 
-`scripts/ci-app.sh`는 고정 의존성 설치, 타입·업무·권한·재시도·API 검사와 웹 빌드, 전용 PostgreSQL 동시 연결 검사를 실행한다. 테스트용 DB는 CI 안에서 분리해 띄우고 실제 고객 메일을 발송하지 않는다. 현재 로컬 검사 43개 통과와 별개로 PostgreSQL의 실제 실행 결과는 아직 대기 중이다. [새 CI 검사와 실행 조건](../../docs/06i-postgres-ci-preparation.md)
+`scripts/ci-app.sh`는 고정 의존성 설치, 타입·업무·권한·재시도·API 검사와 웹 빌드, 전용 PostgreSQL 동시 연결 검사를 실행한다. 테스트용 DB는 CI 안에서 분리해 띄우고 실제 고객 메일을 발송하지 않는다. 2026-09-13 [첫 GitHub CI](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34712562594)에서 기존 46개 검사·타입 검사·웹 빌드 및 별도 PostgreSQL 17 동시 연결 검사가 성공했다. 컨테이너 빌드와 배포 job은 비활성 상태로 건너뛰었다. [CI 검사와 실행 조건](../../docs/06i-postgres-ci-preparation.md)
 
 ## 2. Railway 준비
 
@@ -83,69 +85,52 @@ scripts/ci-app.sh
 
 MongoDB 연결 문자열은 기본 연결 구성에 넣지 않는다. Emergent 인증 방식과 변수 이름은 실제 API 계약에 맞춘다. 일반 직원·고객에게 내부 서비스 비밀값을 전달하지 않는다.
 
-## 3. GitHub 설정
+## 3. GitHub 설정 — 본인 수동 운영 배포
 
-Repository Variables:
+2026-09-13 사용자 결정: 비공개 저장소를 유지하고, 기본 Environment Required reviewers 대신 본인이 GitHub Actions의 **운영 배포 실행**을 직접 시작한다. 이 결정이 이전 Environment 승인 대기 설계를 대체한다.
 
-| 변수 | 값 |
-|---|---|
-| `CRM_APP_READY` | 앱 코드·테스트·컨테이너 계약을 갖춘 후 `true` |
-| `CRM_DEPLOY_ENABLED` | Railway 환경·비밀값·주소 설정 후 `true` |
-| `PRODUCTION_APPROVER` | 운영 배포를 승인할 본인의 정확한 GitHub 로그인 이름 |
+GitHub 저장소의 Settings → Secrets and variables → Actions에서 등록한다. 환경별 Environment 기능에 의존하지 않고 Repository Variables/Secrets를 구분된 이름으로 사용한다.
 
-GitHub에 `staging`, `production` Environment를 만들고 각각 설정한다.
-
-| 종류 | 이름 | 내용 |
+| 종류 | 이름 | 값 또는 용도 |
 |---|---|---|
-| Secret | `RAILWAY_TOKEN` | 해당 환경의 Railway Project Token |
-| Secret | `OPS_READ_TOKEN` | 해당 환경 API의 배포 상태 조회 전용 토큰 |
-| Variable | `CRM_BASE_URL` | 해당 환경 Web의 HTTPS 원점 주소. 경로·쿼리 없음 |
-| Variable | `RAILWAY_ENVIRONMENT_ID` | Railway 환경 ID |
-| Variable | `RAILWAY_WEB_SERVICE_ID` | Web 서비스 ID |
-| Variable | `RAILWAY_API_SERVICE_ID` | API 서비스 ID |
-| Variable | `RAILWAY_WORKER_SERVICE_ID` | Worker 서비스 ID |
-| Variable | `RAILWAY_SCHEDULER_SERVICE_ID` | Scheduler 서비스 ID |
+| Variable | CRM_APP_READY | 운영 런타임·이미지·인증·DB를 검수한 뒤 true |
+| Variable | CRM_STAGING_DEPLOY_ENABLED | 시험 배포 연결이 완료된 뒤 true |
+| Variable | CRM_PRODUCTION_DEPLOY_ENABLED | 시험 배포·사용자 검수가 완료된 뒤 true |
+| Variable | PRODUCTION_APPROVER | leemyeongjun11 |
+| Variable | STAGING_CRM_BASE_URL | 시험 Web의 HTTPS 원점 주소 |
+| Variable | PRODUCTION_CRM_BASE_URL | 운영 Web의 HTTPS 원점 주소 |
+| Secret | STAGING_RAILWAY_TOKEN | staging 전용 Railway Project Token |
+| Secret | PRODUCTION_RAILWAY_TOKEN | production 전용 Railway Project Token |
+| Secret | STAGING_OPS_READ_TOKEN | 시험 API의 실행 상태 조회 토큰 |
+| Secret | PRODUCTION_OPS_READ_TOKEN | 운영 API의 실행 상태 조회 토큰 |
 
-추가로 `staging-verification` Environment를 만든다. main 실행에서 검증 환경을 읽기만 하는 용도다. `CRM_BASE_URL`과 읽기 전용 `OPS_READ_TOKEN`만 staging의 값으로 등록하고 Railway 배포 토큰은 넣지 않는다.
+서비스·환경 ID는 targets.json에서 읽고 UUID 형식과 대상 브랜치를 확인한다. 비밀값은 이 파일에 넣지 않는다. 이전 CRM_DEPLOY_ENABLED는 새 워크플로에서 사용하지 않으며 false를 유지한다. Railway 런타임의 메일·AI·DB 자격증명은 Railway에 저장한다.
 
-| GitHub Environment | 허용 브랜치 | 승인 |
-|---|---|---|
-| staging | staging만 | 자동 |
-| staging-verification | main만 | 자동, 검증 환경 읽기 전용 |
-| production | main만 | 본인의 Required reviewer 승인 필수 |
+## 4. 실행 흐름과 한계
 
-production 설정은 다음과 같다.
+1. 작업 브랜치 → PR → staging: 앱/인프라/PostgreSQL 검사. 준비 플래그가 켜진 경우 네 컨테이너 빌드 후 staging 배포.
+2. staging → PR → main: 자동 검사만 실행한다. main push로 운영 배포가 시작되지 않는다.
+3. 본인이 GitHub Actions → **운영 배포 실행** → **Run workflow**에서 main을 선택하고 시험 환경 확인 체크박스를 체크해 실행한다.
+4. 실행 기록 API로 요청자와 재실행 요청자가 본인 User인지, 전용 workflow_dispatch인지, 현재 main 커밋인지 확인한다. Re-run은 거부하며 실패 후에도 새 실행을 명시적으로 시작해야 한다.
+5. 선택한 커밋의 앱/DB 검사와 컨테이너 빌드를 다시 수행한다. 실제 staging이 동일 Git tree를 실행하고 있고, 해당 staging CI와 배포 job의 readiness 검사가 성공했는지 조회한다. 단순 CI 성공에서 배포 job을 건너뛴 결과는 인정하지 않는다.
+6. Railway 호출 직전 본인과 main 커밋을 재확인한다. API → Worker → Scheduler → Web 배포 후 실제 실행 버전과 heartbeat를 확인한다.
 
-1. Settings → Environments → production → Required reviewers에 본인 계정 하나만 추가한다. 여러 명을 추가하면 그중 한 명만 승인해도 통과할 수 있으므로 다른 사람을 함께 지정하지 않는다.
-2. **Prevent self-review는 끈다.** 본인이 PR을 병합하거나 배포를 시작한 경우에도 직접 승인할 수 있어야 한다.
-3. **Allow administrators to bypass configured protection rules는 끈다.**
-4. Deployment branches and tags는 Selected branches and tags로 지정하고 `main` 브랜치만 허용한다.
-5. Actions에 승인 대기가 나타나면 Review deployments → production → Approve and deploy를 누른다. PR 병합과 이 배포 승인은 별개다.
+운영 workflow는 push·PR·workflow_call 트리거가 없다. 기존 deploy-railway.yml은 staging 전용이며 CI에서 staging 비밀값만 전달한다. 서비스 설정이나 자격증명이 없거나 조회에 실패하면 배포 전에 중단한다. 동시 운영 배포는 직렬화하되 GitHub concurrency는 모든 대기를 보존하는 큐가 아니다.
 
-승인 후 job 안에서도 GitHub Actions 승인 이력 API로 이번 workflow run의 승인자가 `PRODUCTION_APPROVER`인지 확인한다. 이 조회는 `GITHUB_TOKEN`의 `actions: read`를 사용하고 승인 자체를 자동으로 수행하지 않는다. 환경 설정이 빠져 job이 즉시 시작돼도 실제 승인 기록이 없으면 Railway 호출 전에 실패한다. 승인 기록을 조회할 수 없어도 진행하지 않는다. [GitHub 승인 이력 API](https://docs.github.com/en/rest/actions/workflow-runs#get-the-review-history-for-a-workflow-run)
+CLI 빌드 성공만으로 배포 완료로 보지 않는다. 일부 서비스 배포 후 실패할 수 있으므로 수동 복구 시 호환되는 이전 버전과 DB 상태를 함께 확인한다. 자동 전체 롤백은 구현하지 않았다. staging에서 업무 시나리오와 모바일 검수도 따로 수행해야 한다.
 
-브랜치는 `작업 브랜치 → PR → staging → PR → main`으로 운영한다. main을 기본 브랜치로 두고 staging/main에 PR 필수, CI 필수, 강제 push·삭제·직접 push 제한 규칙을 적용한다. main 대상 PR은 동일 저장소의 staging에서 온 경우만 CI를 통과한다. 혼자 작업한다면 PR 작성자 본인이 자신의 PR 리뷰 승인을 할 수 없다는 점을 고려해, PR 존재·CI 필수 규칙과 별도 운영 배포 본인 승인을 사용한다. 실제 계정/저장소 연결 전에는 이러한 원격 규칙이 설정된 상태가 아니다.
+이 방식은 GitHub의 기본 환경 승인과 다르다. GitHub는 UI의 버튼과 같은 계정의 CLI/API 수동 요청을 구별해 증명하지 않으므로 계정·토큰 관리가 필요하다. 에이전트는 운영 workflow를 사용자 대신 호출하지 않는다. 저장소 쓰기/관리 권한이 있는 사람은 workflow나 Repository Secrets 사용 방식을 바꿀 수 있다. 현재 요금제의 비공개 저장소에서는 브랜치 보호도 강제할 수 없으므로, 본인만 쓰기/관리 권한을 보유하는 운영 전제를 유지한다. CI의 main PR 출처 검사는 플랫폼 수준의 직접 push 차단을 대체하지 않는다.
 
-API, AI, 메일, DB의 런타임 비밀값은 Railway에 저장한다. PR 테스트에는 운영 비밀값을 제공하지 않는다. Railway GitHub 자동 배포와 우회 배포 경로도 사용하지 않는다. 저장소 관리자 자체가 워크플로·환경 규칙을 변경하는 권한까지 로컬 설정 파일로 없애는 것은 아니므로 해당 관리 권한은 본인이 보유한다.
-
-
-GitHub의 Required reviewers 지원은 저장소 공개 여부·요금제에 따라 다르다. 공식 문서 기준 Free/Pro/Team의 Required reviewers는 공개 저장소에서 제공된다. 비공개 저장소에서 지원되지 않으면 **이번 요구를 충족할 수 있는 요금제·승인 구성이 확인될 때까지 운영 배포를 활성화하지 않는다.** 저장소를 임의로 공개하거나 수동 실행 버튼으로 승인 절차를 대체하지 않는다. [GitHub 환경 제한](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
-
-## 4. 배포 순서와 실패 처리
-
-- PR → staging: 인프라 검사 → 앱 테스트 → 네 컨테이너 빌드. 병합 후 staging에 자동 배포.
-- PR staging → main: CI 검증 후 병합. 앱 검사 → staging과 전체 소스 내용 일치 확인 → **본인 승인 대기** → production 배포 → 실제 실행 상태 확인.
-- 커밋 SHA는 PR 병합 시 바뀔 수 있으므로 전체 파일 내용을 나타내는 Git tree SHA를 비교한다. 소스가 다르면 배포를 막고 staging에서 다시 검증한다. 환경 변수/DB 데이터까지 같다고 판정하는 검사는 아니다.
-- 수동 새 배포 실행도 staging은 staging 브랜치, production은 main 브랜치에서만 가능하다. production은 언제나 별도 본인 승인을 받아야 한다.
-- 승인 이력이 run attempt를 구분하지 않으므로 production의 Re-run은 거부한다. 실패 후 main에서 새 workflow_dispatch 실행을 생성하고 다시 승인한다.
-- 환경별 동시 배포는 직렬화하고 실행 중인 배포를 새 push 때문에 중단하지 않는다.
-- API → Worker → Scheduler → Web 순서로 업로드한다. CLI `--ci`의 성공은 빌드 단계 성공이므로 후속 실행 검사가 필수다. 서비스 간 구/신 버전 공존을 허용하는 호환 설계가 필요하다.
-- 배포 오류나 시간 초과 시 자동 반복 배포하지 않는다. Railway에서 이미 적용된 서비스와 실패한 서비스를 확인한다. DB 마이그레이션·여러 서비스의 일괄 자동 롤백은 이 워크플로에 구현돼 있지 않다.
-- 기존 버전 복구는 호환되는 이미지/배포를 서비스별로 선택해 시행하고, 실행기와 예약 실행 상태를 확인한다. 이후 실패 원인을 수정해 정상 파이프라인으로 재배포한다.
-
-상태 점검은 실제 사용 흐름 전체의 테스트가 아니다. staging에서 접수·배정·연락 기록·예정 알림·승인 메일의 종단 간 검증도 해야 한다. 현재 워크플로에는 실제 앱 테스트 진입점만 있으며 이 업무 검증 자체는 앱 구현 시 추가해야 한다.
-
+참고: [GitHub 수동 실행](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow), [GitHub 환경 기능 제한](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
 ## 5. 로컬 확인
+
+실제 계정 연결(2026-09-13): CLI 로그인과 `balanced-balance` 프로젝트의 staging 연결을 완료했다. 두 환경의 네 서비스가 싱가포르·복제본 1개로 설정됐음을 CLI에서 확인했다. `targets.json`에는 환경·서비스 식별자만 보관한다. 아래 명령으로 현재 원격 설정을 읽기 전용으로 재확인한다. 서비스 생성·배포·비밀값 출력은 하지 않는다.
+
+```powershell
+.\scripts\check-railway-state.ps1
+```
+
+로컬 CLI는 `.local-data/railway-tools/node_modules/.bin/railway.cmd`이며 Git에 포함하지 않는다. 다른 컴퓨터에서는 CLI 설치·로그인·기존 프로젝트 연결이 필요하다. 기존 파일 검사나 이 조회가 통과해도 앱 배포가 완료된 것은 아니다.
 
 프로젝트 폴더의 터미널에서 실행한다. 이 명령은 배포하지 않는다.
 

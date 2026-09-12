@@ -1,6 +1,6 @@
 # 6차 진행 현황
 
-갱신: 2026-09-13. **현재 6.1 MVP 구축 중**.
+갱신: 2026-09-13. **현재 진행 작업은 6.3 배포(CI/CD) 준비**다. 6.1의 실제 외부 연동과 6.2의 전체 운영 검수는 아직 남아 있으며, 단계 전체가 완료됐다는 의미는 아니다.
 
 남은 작업은 [첫 배포까지의 여섯 묶음](06-first-release-checklist.md)으로 고정해서 관리한다.
 
@@ -8,7 +8,7 @@
 |---|---|
 | 6.1 MVP 범위 구축 | 핵심 CRM 저장·권한·변경 확인·누락 감지·로컬 알림·운영 기준·첫 연락 성과 구현. 실제 이메일·Emergent·AI 제공자 연결, 추가 운영 기능은 미완료 |
 | 6.2 검수 및 안정화 | 구현 단위마다 자동/화면 검수 진행. 로컬 백업·별도 DB 복원 검사 완료. 외부 연동 포함 전체 시나리오·부하·운영 PostgreSQL 백업/복구·동시 접속 검수는 남음 |
-| 6.3 배포(CI/CD) | GitHub Actions 및 Railway 설정 골격 존재. 저장소·계정 연결, 배포 가능한 서비스 이미지·운영 인증, staging 검수 및 본인 승인 후 production 배포는 남음 |
+| 6.3 배포(CI/CD) | 비공개 GitHub 저장소에 main/staging 업로드 완료. 첫 GitHub CI에서 앱·인프라·PostgreSQL 검사 통과. Railway 빈 API 서비스·싱가포르 설정 준비 중. 배포 가능한 서비스 이미지·운영 인증, staging 검수 및 본인 승인 후 production 배포는 남음 |
 | 6.4 추가 구축 | 첫 MVP 전체 검수·배포 후 진행 |
 
 ## 구현·검수된 단위
@@ -30,7 +30,13 @@
 
 ## 연결 대기
 
-GitHub 준비 갱신: 사용자가 비공개 저장소 `leemyeongjun11/customer-work-crm`을 생성했다. 로컬 Git 연결과 접근을 확인했으며 첫 소스 업로드를 진행한다. Railway·발신용 메일 서비스와 실제 외부 연동 정보는 계속 준비 대기다. 계정·비용·연결 정보를 추정하거나 외부 발송·배포 성공으로 표시하지 않는다.
+GitHub 준비 갱신: 비공개 저장소 `leemyeongjun11/customer-work-crm`의 main/staging에 초기 커밋 `e9a9e0a6ee4d68344dd1085d8d2978a37311ea18` 업로드와 원격 워크플로 등록을 확인했다. 2026-09-13 staging에서 [첫 CI 실행](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34712562594)을 요청했다. 배포 활성화 변수는 설정되지 않았다.
+
+첫 CI 최종 결과: `infrastructure`·`ui`·`postgres`가 모두 성공했다. 기존 46개 검사·타입 검사·웹 빌드에 더해 PostgreSQL 17의 별도 연결을 통한 중복 수신·동시 수정·Worker 경합·복원 호환 검사도 실제 실행을 통과했다. 위 PostgreSQL 실행 대기 기록은 준비 당시의 이력이며 이 실행으로 갱신한다. `application` 컨테이너 빌드·`staging` 배포·`production` 배포는 비활성 조건으로 건너뛰었다. 따라서 첫 CI 성공은 운영 이미지나 실제 배포 검증을 뜻하지 않는다.
+
+Railway CLI 5.54.0을 `.local-data/railway-tools`에 설치하고 브라우저 로그인 승인 후 기존 `balanced-balance` 프로젝트의 staging에 연결했다. CLI로 staging/production 각각 web·api·worker·scheduler가 모두 싱가포르·복제본 1개임을 확인했다. 이전 SFO 대기 변경 확인도 이 조회로 해소했다. 식별자만 `infra/railway/targets.json`에 기록하고 로그인 비밀값은 기록하지 않는다. `scripts/check-railway-state.ps1`로 반복 확인할 수 있다. 서비스에 앱 코드가 배포된 상태는 아니다. Railway PostgreSQL·발신 메일·실제 외부 연동은 아직 미연결이다.
+
+GitHub 승인 제약과 변경: 원격 Environments는 0개이며 rulesets 조회가 요금제 제한으로 거부됐다. 이후 사용자가 **비공개 유지·본인 수동 운영 배포 실행**으로 변경하는 데 동의했다. [변경 명세](06k-owner-triggered-deployment.md)에 따라 전용 workflow와 본인·커밋·시험 배포 성공 검사를 구현했다. 기존 자동 운영 배포와 Environment 의존성을 제거했다. 로컬 전체 검사 50개·타입 검사·웹 빌드 및 actionlint 1.7.12 검사가 통과했다. 실제 운영 배포는 실행하지 않았다. 저장소 공개 전환이나 유료 업그레이드도 하지 않았다.
 
 실제 연결 순서: GitHub 계정·저장소 준비 → Railway 계정과 staging/production 구성 → 발신 주소·메일 서비스 결정과 검수 수신함 연결 → Emergent API 연결 → AI 제공자·실행 범위와 비용 결정. 실제 비밀값은 Git에 저장하지 않는다. 원래의 GitHub 본인 승인 후 운영 배포 원칙을 유지한다.
 
