@@ -16,6 +16,7 @@ import { OperatingSettings, FirstContactMetrics } from './Operations';
 import {useLiveChanges} from './useLiveChanges';
 import {Integrations} from './Integrations';
 import {Accounts} from './Accounts';
+import { AiWorkflowDemo } from './AiWorkflowDemo';
 import { CaseActions, ChangeSummary, isCaseClosed, type CaseData, type Proposal } from './CaseActions';
 
 type User = {id:string;name:string;email:string;role:'admin'|'staff'};
@@ -31,6 +32,11 @@ function Notice({children}:{children:ReactNode}){return <p role="status" classNa
 function ErrorText({message}:{message:string}){return message?<p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{message}</p>:null;}
 
 export function LiveApp(){
+  const location = useLocation();
+  return location.pathname === '/live/ai-demo' ? <AiWorkflowDemo/> : <LiveWorkspace/>;
+}
+
+function LiveWorkspace(){
   useEffect(()=>{document.title='고객 업무 관리 · 실제 저장 검수';},[]);
   const [user,setUser]=useState<User|null>(null),[boot,setBoot]=useState(true),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [board,setBoard]=useState<Board|null>(null),[cases,setCases]=useState<Case[]>([]),[detail,setDetail]=useState<Detail|null>(null);
@@ -55,7 +61,7 @@ export function LiveApp(){
     setError('');try{const r:Detail=await request(`/cases/${task.caseId}`);const fresh=r.tasks.find(t=>t.id===task.id);if(fresh)setEditor({kind,task:fresh,caseId:task.caseId,caseVersion:r.salesCase.version,stage:r.salesCase.stage});}catch(e){setError((e as Error).message);}
   }
   const card=(task:Task)=><Card key={task.id} className="min-w-0 max-w-full gap-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><Link className="text-sm underline" to={`/live/cases/${task.caseId}`}>{task.caseName||detail?.salesCase.name}</Link><Badge variant={task.dueAt&&Date.parse(task.dueAt)<Date.now()?'destructive':'secondary'}>{task.dueAt?Date.parse(task.dueAt)<Date.now()?'기한 초과':'미완료':'기한 확인 필요'}</Badge></div><h3 className="break-words font-semibold">{task.title}</h3><p className="truncate text-sm text-muted-foreground" title={task.request||detail?.salesCase.original.memo}>초기 요청 · {task.request||detail?.salesCase.original.memo}</p><p className="text-xs text-muted-foreground">{fmt(task.dueAt)} · {task.assigneeName||detail?.salesCase.assigneeName}</p><div className="flex flex-wrap justify-end gap-2">{!isCaseClosed(detail?.salesCase.stage||'')&&<><Button variant="outline" size="sm" onClick={()=>void editTask(task,'due')}>{task.dueAt?'기한 변경':'기한 설정'}</Button><Button size="sm" onClick={()=>void editTask(task,'record')}>{task.kind==='first'?'지금 연락하기':'지금 처리하기'}</Button>{caseId&&<Button variant="ghost" size="sm" onClick={()=>void editTask(task,'exclude')}>관리 제외</Button>}</>}</div></Card>;
-  return <div className="min-h-screen bg-background text-foreground"><header className="border-b"><div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4"><Link to="/live" className="font-semibold">고객 업무 관리</Link><Badge variant="outline">6.1 · MVP 구축 중</Badge>{user&&<div className="flex items-center gap-3 text-sm"><span>{user.name} · {user.role==='admin'?'관리자':'직원'}</span><Button variant="outline" size="sm" onClick={async()=>{try{await request('/auth/logout','POST');setUser(null);setEditor(null);setBoard(null);setCases([]);setDetail(null);navigate('/live');}catch(e){setError((e as Error).message);}}}>로그아웃</Button></div>}</div></header>
+  return <div className="min-h-screen bg-background text-foreground"><header className="border-b"><div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4"><Link to="/live" className="font-semibold">고객 업무 관리</Link><Badge variant="outline">6.1 · MVP 구축 중</Badge><Link to="/live/ai-demo" className="text-sm underline">AI 업무 정리 시연</Link>{user&&<div className="flex items-center gap-3 text-sm"><span>{user.name} · {user.role==='admin'?'관리자':'직원'}</span><Button variant="outline" size="sm" onClick={async()=>{try{await request('/auth/logout','POST');setUser(null);setEditor(null);setBoard(null);setCases([]);setDetail(null);navigate('/live');}catch(e){setError((e as Error).message);}}}>로그아웃</Button></div>}</div></header>
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
       <p className="mb-5 text-xs leading-relaxed text-muted-foreground">저장한 기록은 서버에 보관됩니다. 현재는 시험 사용 단계로 예시 정보를 입력해 주세요. 전화·문자는 직접 수행한 뒤 기록하며, 이메일·AI·외부 문의 연동은 아직 연결 전입니다.</p>
       {isInquiry?<LiveInquiry/>:boot?<Notice>로그인 상태를 확인하고 있습니다.</Notice>:!user?<><ErrorText message={error}/><Login onLogin={u=>{setUser(u);setBoard(null);setDetail(null);setCases([]);setError('');}}/></>:<>
