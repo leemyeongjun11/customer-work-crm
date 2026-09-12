@@ -8,7 +8,7 @@
     "dev": "pnpm --filter @crm/web dev",
     "build": "pnpm --filter @crm/web build",
     "typecheck": "pnpm --filter @crm/web typecheck",
-    "test": "node --test packages/domain/*.test.mjs scripts/release-check.test.mjs scripts/check-production-approval.test.mjs && pnpm --filter @crm/api test",
+    "test": "node --test packages/domain/*.test.mjs scripts/release-check.test.mjs scripts/check-production-approval.test.mjs scripts/check-staging-release.test.mjs && pnpm --filter @crm/api test",
     "live:setup": "pnpm --filter @crm/api run setup",
     "live": "pnpm --filter @crm/api start",
     "check": "pnpm typecheck && pnpm test && pnpm build",
