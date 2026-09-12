@@ -66,7 +66,7 @@ async function compose(tx,job,at){
   if(!tasks.length&&!missing.length&&!noDate.length)return null;
   const title=job.kind==='first_reminder'?'오늘 마감 첫 연락 알림':job.kind==='review'?'현재 업무 알림 미리보기':'오늘 업무 통합 알림';
   const items=tasks.map(t=>`- ${t.name} / ${t.title} / ${displayDate(t.due_at)}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${t.case_id}`);
-  items.push(...noDate.map(t=>`- [기한 확인 필요] ${t.name} / ${t.title}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${t.case_id}`),...missing.map(c=>`- [다음 행동 없음] ${c.name}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${c.id}`));
+  items.push(...noDate.map(t=>`- [기한 확인 필요] ${t.name} / ${t.title}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${t.case_id}`),...missing.map(c=>`- [다음 할 일 등록 필요] ${c.name}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${c.id}`));
   return {recipient:user.email,recipientId:user.id,subject:`${title} · ${items.length}건`,body:`${user.name}님, 아래 업무를 확인해 주세요.\n\n${items.join('\n\n')}`};
 }
 function displayDate(value){return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date(value));}
