@@ -8,6 +8,8 @@
 
 ## 범위와 제한
 
+2026-09-13 실행 결과: [GitHub 자동 배포](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34716286686) 3번째 시도가 성공했다. 배포 ID는 `34716286686-3`, 커밋은 `e12e6f6ad1d9258292eaf98a5c16b248c0ff9cdb`다. Railway 기본 Railpack 설정으로 처음 빌드가 실패하여 시험 서비스 각각에 검증한 Dockerfile 경로와 healthcheck/싱가포르 설정을 반영한 후 재실행했다. 새로운 환경을 만들 때도 동일 설정을 확인해야 한다. 공개 HTTPS에서 로그인·예시 접수·연락 완료 저장·재조회·SSE·로그아웃 무효화를 검증했고 로그인 화면 표시를 확인했다.
+
 - 시험 URL은 `https://web-staging-d005.up.railway.app/live`이며 실제 기동 완료 여부는 Actions 배포 결과와 실행 상태 검증으로 확인한다.
 - 예시 데이터 검수용이다. 외부 이메일·AI·Emergent 공급자 자격 정보는 연결 전이다.
 - 원격 백업 저장소와 운영 환경 복원 검수는 남아 있다. 클라우드 백업 API는 설정 없이 임시 파일에 저장하는 대신 연결 전 상태를 반환한다.

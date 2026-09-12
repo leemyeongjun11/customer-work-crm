@@ -50,7 +50,7 @@ test('예약 시각·휴일·대상 재검증·수신자별 중복 방지와 다
   const key=randomUUID();const review=await notifications.reviewNow(staff,key);
   assert.equal((await notifications.reviewNow(staff,key)).id,review.id);
   await runWorker(db,'2026-09-14T07:31:00Z');
-  assert.match((await notifications.inbox(staff)).messages.find(m=>m.subject.includes('미리보기')).body,/다음 행동 없음/);
+  assert.match((await notifications.inbox(staff)).messages.find(m=>m.subject.includes('미리보기')).body,/다음 할 일 등록 필요/);
   version=(await service.detail(staff,id)).salesCase.version;
   const p=await service.proposeChange(staff,id,{type:'close',reason:'종료 확인',expectedVersion:version},randomUUID());
   await service.decideChange(staff,p.id,'approve',{expectedCaseVersion:version,expectedProposalVersion:1,confirmed:true},randomUUID());
