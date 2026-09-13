@@ -125,13 +125,16 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           if(action==='preview'&&req.method==='GET')return reply(200,await service.previewChange(user,id));
           if(['approve','reject'].includes(action)&&req.method==='POST')return reply(200,await service.decideChange(user,id,action,await jsonBody(req),req.headers['idempotency-key']));
         }
-        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals))?$/.exec(path);
+        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals|related|link|follow-up))?$/.exec(path);
         if(caseRoute) {
           const [,id,action]=caseRoute;
+          if(action==='related'&&req.method==='GET')return reply(200,await service.relatedCases(user,id));
           if(!action&&req.method==='GET')return reply(200,await service.detail(user,id));
           if(!action&&req.method==='PATCH')return reply(200,await service.updateCustomer(user,id,await jsonBody(req),req.headers['idempotency-key']));
           if(req.method==='POST'&&action){
             const body=await jsonBody(req),key=req.headers['idempotency-key'];
+            if(action==='link')return reply(200,await service.linkCases(user,id,body,key));
+            if(action==='follow-up')return reply(200,await service.followUp(user,id,body,key));
             if(action==='tasks')return reply(201,await service.addTask(user,id,body,key));
             if(action==='notes')return reply(201,await service.addNote(user,id,body,key));
             if(action==='contacts')return reply(201,await service.updateTask(user,id,body.taskId,'contact',body,key));

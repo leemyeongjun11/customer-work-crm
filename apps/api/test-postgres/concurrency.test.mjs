@@ -40,4 +40,22 @@ test('PostgreSQL 다중 연결: 중복 수신·동시 수정·Worker 경합·PGl
   assert.ok((await a.query('SELECT attempts FROM crm_notification_jobs')).rows.every(r=>r.attempts===1));
   const snapshot=await companySnapshot(a,c.tenantId);restored=await openDatabase({url:'',directory:''});
   const result=await restoreIntoEmpty(restored,snapshot);assert.equal(result.counts.crm_cases,1);assert.equal(result.counts.crm_review_mail,2);
+  const serviceA=createService(a),serviceB=createService(b);
+  const inquiry={customerType:'company',name:'동시 연결 업체',person:'담당자 A',phone:'010-0000-1111',email:'link@example.com',memo:'2층 점검'};
+  const one=(await serviceA.intake('local-review',inquiry,randomUUID())).receiptId;
+  const two=(await serviceA.intake('local-review',{...inquiry,person:'담당자 B'},randomUUID())).receiptId;
+  const merge={targetId:one,expectedVersion:1,targetVersion:1,keepTaskIds:[],confirmed:true,reason:'동일 요청 확인'};
+  const race=await Promise.allSettled([
+    serviceA.linkCases(actor,two,merge,randomUUID()),
+    serviceB.addTask(actor,one,{taskType:'visit',description:'동시 추가',date:'',expectedVersion:1},randomUUID()),
+  ]);
+  assert.equal(race.filter(r=>r.status==='fulfilled').length,1);
+  assert.equal(race.find(r=>r.status==='rejected').reason.status,409);
+  if(race[0].status==='rejected')await serviceA.linkCases(actor,two,{...merge,targetVersion:2},randomUUID());
+  let root=await serviceA.detail(actor,one);assert.equal(root.linkedContacts.length,1);
+  const next={expectedVersion:root.salesCase.version,stage:'제안·협의',situation:'견적 요청',createTask:true,taskType:'quote',description:'새 견적',date:'',confirmed:true};
+  const nextKey=randomUUID(),repeated=await Promise.all([serviceA,serviceB].map(s=>s.followUp(actor,one,next,nextKey)));
+  assert.deepEqual(repeated[0],repeated[1]);root=await serviceA.detail(actor,one);
+  assert.equal(root.tasks.filter(t=>t.taskType==='quote').length,1);
+  assert.equal(root.salesCase.followUp,null);
 });

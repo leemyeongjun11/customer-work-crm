@@ -52,7 +52,10 @@ export async function restoreIntoEmpty(db,snapshot){
   if(snapshot?.schemaHash==='ab3935611413d6d1be019b35bd1dffd04cbd45cdb28b839f1391f6c3046ab1b8'){
     requireValue(snapshot.data&&Object.keys(snapshot.data).length===tables.length-1&&!Object.hasOwn(snapshot.data,'crm_account_history')&&Array.isArray(snapshot.data.crm_users),'이전 백업 구조를 확인해 주세요.',409);
     requireValue(snapshot.data.crm_users.every(u=>!Object.hasOwn(u,'version')),'이전 계정 구조가 일치하지 않습니다.',409);
-    snapshot={...snapshot,schemaHash:await signature(),data:{...snapshot.data,crm_users:snapshot.data.crm_users.map(u=>({...u,version:1})),crm_account_history:[]}};
+    snapshot={...snapshot,schemaHash:await signature(),data:{...snapshot.data,crm_users:snapshot.data.crm_users.map(u=>({...u,version:1})),crm_account_history:[],crm_cases:snapshot.data.crm_cases.map(c=>({...c,follow_up:null,linked_case_id:null}))}};
+  }
+  if(snapshot?.schemaHash==='d2eb1e70e4b6282c7b7132c8e61dfc27960ec902d31b4e7948e120e77933e132'&&snapshot?.data?.crm_cases?.every(c=>!Object.hasOwn(c,'follow_up')&&!Object.hasOwn(c,'linked_case_id'))){
+    snapshot={...snapshot,schemaHash:await signature(),data:{...snapshot.data,crm_cases:snapshot.data.crm_cases.map(c=>({...c,follow_up:null,linked_case_id:null}))}};
   }
   requireValue(snapshot?.format==='crm-company'&&snapshot.version===1&&snapshot.schemaHash===await signature(),'이 백업을 만든 코드 버전과 데이터 구조를 확인해 주세요.',409);
   requireValue(snapshot.data&&Object.keys(snapshot.data).length===tables.length&&tables.every(t=>Array.isArray(snapshot.data[t])),'백업 데이터 목록을 확인해 주세요.');

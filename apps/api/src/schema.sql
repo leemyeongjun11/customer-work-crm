@@ -140,3 +140,8 @@ CREATE TABLE IF NOT EXISTS crm_account_history (
   before_active boolean NOT NULL, after_active boolean NOT NULL,
   reason text NOT NULL, created_at timestamptz NOT NULL
 );
+
+
+ALTER TABLE crm_cases ADD COLUMN IF NOT EXISTS follow_up jsonb;
+ALTER TABLE crm_cases ADD COLUMN IF NOT EXISTS linked_case_id uuid REFERENCES crm_cases(id) DEFERRABLE INITIALLY DEFERRED;
+CREATE INDEX IF NOT EXISTS crm_cases_linked ON crm_cases(tenant_id,linked_case_id);
