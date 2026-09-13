@@ -1,8 +1,8 @@
 # Railway / GitHub Actions 연결 안내
 
-이 폴더는 **앱 연결용 배포 설정**이다. 현재 `apps/web`에 로컬 프레임 검수용 화면이 있으며 [프로젝트 README](../../README.md)에 따라 실행할 수 있다. 운영용 API·Worker·Scheduler·인증·DB 연결은 아직 구현 전이므로 워크플로의 배포 단계는 기본 비활성이다. 설계는 [싱가포르·실시간 문의·승인 배포 구조](../../docs/04b-railway-scalable-architecture.md)를 따른다.
+이 폴더는 **Railway 시험·운영 환경의 배포 설정**이다. 현재 web·api·worker·scheduler를 별도 서비스로 실행하고 PostgreSQL을 공유하는 시험 환경을 연결했다. 사용 주소와 기능 범위는 [프로젝트 README](../../README.md), 배포 검수 기록은 [시험 실행 환경](../../docs/06l-staging-runtime.md)을 참고한다.
 
-2026-09-13 갱신: 로컬 API 인증·저장과 예약/처리 모듈을 구현했으며 PGlite 환경에서는 한 프로세스에서 실행한다. 위 ‘운영용 미구현’은 독립 배포 서비스와 실제 외부 연동에 해당한다. 아래 이미지·실행 식별·readiness·본인 승인 계약을 충족하기 전에는 배포 플래그를 활성화하지 않는다. GitHub 비공개 저장소의 main/staging 업로드와 Railway 계정·프로젝트 생성은 완료했다. 빈 API 서비스 지역 설정을 진행 중이며 실제 앱 배포는 아직 없다.
+2026-09-13 갱신: 앱 준비·staging 자동 배포는 활성화됐고 실제 PostgreSQL·컨테이너·실행 상태 검사를 통과했다. production 배포는 비활성이며 실제 AI·외부 발송·전체 운영 검수는 남아 있다. 로컬 PGlite 검수에서는 API·worker·scheduler가 한 프로세스에서 실행된다. 아래 본인 수동 운영 배포와 검증 절차를 유지하며 시험 배포 성공만으로 운영 준비가 끝났다고 판단하지 않는다.
 
 ## 파일
 

@@ -6,7 +6,11 @@
 
 각 서버는 배포 커밋·Git tree·Actions 실행 ID를 반환한다. API/worker/scheduler는 DB에 인스턴스별 준비 상태를 기록한다. 배포 검증은 모든 활성 인스턴스의 버전과 상태를 확인한다. 단순한 Docker 빌드 성공이나 HTTP 200만으로 배포 성공을 판정하지 않는다.
 
-## 범위와 제한
+## 현재 상태와 범위
+
+2026-09-13 최신 기능 배포: [완료 후 안내와 요청 연결](06n-follow-up-and-linked-requests.md)을 포함한 커밋 `ef1f52014d29614d9b85aa0172cc9b94b9abedbf`의 [CI·배포 실행 34746204954](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34746204954)이 2번째 시도에서 성공했다. 웹·API·worker·scheduler의 실행 버전 검사를 통과했으며 아래 시험 URL에서 사용한다. 이후 문서 변경 등으로 배포 식별자가 달라질 수 있으므로 현재 실행은 GitHub Actions와 서비스 상태를 기준으로 확인한다.
+
+다음은 **최초 시험 배포 당시의 기록**이다.
 
 2026-09-13 실행 결과: [GitHub 자동 배포](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34716286686) 3번째 시도가 성공했다. 배포 ID는 `34716286686-3`, 커밋은 `e12e6f6ad1d9258292eaf98a5c16b248c0ff9cdb`다. Railway 기본 Railpack 설정으로 처음 빌드가 실패하여 시험 서비스 각각에 검증한 Dockerfile 경로와 healthcheck/싱가포르 설정을 반영한 후 재실행했다. 새로운 환경을 만들 때도 동일 설정을 확인해야 한다. 공개 HTTPS에서 로그인·예시 접수·연락 완료 저장·재조회·SSE·로그아웃 무효화를 검증했고 로그인 화면 표시를 확인했다.
 
