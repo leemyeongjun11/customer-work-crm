@@ -17,6 +17,7 @@ import {accountService} from './accounts.mjs';
 import {readExportConnections,exportPageFetcher} from './emergent-export.mjs';
 import {startRecoveryPolling} from '../../scheduler/src/recovery-polling.mjs';
 import {sameSecret,rateLimit,deploymentStatus} from './cloud.mjs';
+import {createAiSuggestions} from './ai-suggestions.mjs';
 
 const dist = fileURLToPath(new URL('../../web/dist/',import.meta.url));
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
@@ -30,8 +31,9 @@ async function jsonBody(req) {
   const raw=await rawJsonBody(req);
   try {return JSON.parse(raw.toString('utf8'));} catch {throw new ApiError(400,'JSON 내용을 확인해 주세요.');}
 }
-export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[],eventPollMs=1000,recoveryFetchPage,backupDirectory,cloud,health}={}) {
-  const service=createService(db,clock),notifications=notificationService(db,clock),operations=operationService(db,clock);const buckets=new Map();
+export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[],eventPollMs=1000,recoveryFetchPage,backupDirectory,cloud,health,ai={}}={}) {
+  const service=createService(db,clock,{aiEnv:ai.env}),notifications=notificationService(db,clock),operations=operationService(db,clock);const buckets=new Map();
+  const aiSuggestions=createAiSuggestions({service,clock,...ai});
   const ingestion=ingestionService(db,{clock,keys:webhookKeys});
   const streams=createChangeStreams(db,{clock,pollMs:eventPollMs,secureSession:!!cloud});
   const recovery=recoveryService(db,{clock,fetchPage:recoveryFetchPage});
@@ -84,6 +86,7 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           throw new ApiError(405,'지원하지 않는 요청입니다.');
         }
         const user=await authenticate(db,req.headers.cookie,clock(),!!cloud);
+        if(path===`${prefix}/ai/status`&&req.method==='GET')return reply(200,aiSuggestions.status());
         if(cloud&&path.startsWith(`${prefix}/admin/backups`))throw new ApiError(503,'시험 환경의 원격 백업 저장소는 아직 연결 전입니다. 운영 전 별도 검수가 필요합니다.');
         if(path===`${prefix}/admin/users`&&req.method==='GET')return reply(200,await accounts.list(user));
         const accountRoute=/^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/(preview|status)$/.exec(path);
@@ -125,7 +128,7 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           if(action==='preview'&&req.method==='GET')return reply(200,await service.previewChange(user,id));
           if(['approve','reject'].includes(action)&&req.method==='POST')return reply(200,await service.decideChange(user,id,action,await jsonBody(req),req.headers['idempotency-key']));
         }
-        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals|related|link|follow-up))?$/.exec(path);
+        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals|related|link|follow-up|ai-suggestion))?$/.exec(path);
         if(caseRoute) {
           const [,id,action]=caseRoute;
           if(action==='related'&&req.method==='GET')return reply(200,await service.relatedCases(user,id));
@@ -133,6 +136,10 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           if(!action&&req.method==='PATCH')return reply(200,await service.updateCustomer(user,id,await jsonBody(req),req.headers['idempotency-key']));
           if(req.method==='POST'&&action){
             const body=await jsonBody(req),key=req.headers['idempotency-key'];
+            if(action==='ai-suggestion'){
+              await limit(req,'ai-suggestion',2);
+              return reply(200,await aiSuggestions.suggest(user,id,body));
+            }
             if(action==='link')return reply(200,await service.linkCases(user,id,body,key));
             if(action==='follow-up')return reply(200,await service.followUp(user,id,body,key));
             if(action==='tasks')return reply(201,await service.addTask(user,id,body,key));

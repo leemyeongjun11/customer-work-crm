@@ -12,7 +12,7 @@ const caseView = c => ({id:c.id,name:c.name,person:c.person,phone:c.phone,email:
 const proposalView = p => ({id:p.id,type:p.type,reason:p.reason,status:p.status,proposedAssigneeId:p.proposed_assignee_id,version:p.version,caseVersion:p.case_version,createdAt:iso(p.created_at)});
 const taskView = t => ({id:t.id,caseId:t.case_id,title:t.title,taskType:t.task_type,description:t.description,kind:t.kind,status:t.status,excluded:t.excluded,dueAt:iso(t.due_at),originalDueAt:iso(t.original_due_at),completedAt:iso(t.completed_at),completedBy:t.completed_by,version:t.version,deadlineStatus:t.due_at?'known':'needs_confirmation'});
 
-export function createService(db, clock = () => new Date()) {
+export function createService(db, clock = () => new Date(), {aiEnv=process.env}={}) {
   const now = () => clock().toISOString();
   async function access(tx, user, id, lock = false) {
     requireValue(/^[0-9a-f-]{36}$/i.test(id), '영업건을 찾을 수 없습니다.',404);
@@ -60,7 +60,7 @@ export function createService(db, clock = () => new Date()) {
     requireValue(rows[0],'활성 상태인 같은 회사의 담당자를 선택해 주세요.');return rows[0];
   }
   return {
-    ...followUpService({db,access,once,version,audit,now,caseView,taskView}),
+    ...followUpService({db,access,once,version,audit,now,caseView,taskView,aiEnv}),
     async assignees(user) {
       requireValue(user.role==='admin','담당자 변경은 관리자만 할 수 있습니다.',403);
       const {rows}=await db.query('SELECT id,name,role FROM crm_users WHERE tenant_id=$1 AND active=true ORDER BY name,id',[user.tenantId]);return {items:rows};
