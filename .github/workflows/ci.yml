@@ -84,7 +84,6 @@ jobs:
 
   application:
     needs: [infrastructure, ui, postgres]
-    if: vars.CRM_APP_READY == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -115,6 +114,8 @@ jobs:
           for service in api worker scheduler web; do
             docker build --file "apps/$service/Dockerfile" --tag "crm-$service:$GITHUB_SHA" .
           done
+      - name: Verify containers against a disposable PostgreSQL database
+        run: node scripts/smoke-containers.mjs
 
   staging:
     needs: application

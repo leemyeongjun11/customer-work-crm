@@ -1,14 +1,18 @@
 # 6차 진행 현황
 
-갱신: 2026-09-13. **현재 진행 작업은 6.3 배포(CI/CD) 준비**다. 6.1의 실제 외부 연동과 6.2의 전체 운영 검수는 아직 남아 있으며, 단계 전체가 완료됐다는 의미는 아니다.
+갱신: 2026-09-13. **6.3 시험 환경 자동 배포와 공개 주소 기능 검수가 완료**됐다. 6.1의 실제 외부 연동과 6.2의 전체 운영 검수는 아직 남아 있으며, 단계 전체가 완료됐다는 의미는 아니다.
 
-남은 작업은 [첫 배포까지의 여섯 묶음](06-first-release-checklist.md)으로 고정해서 관리한다.
+최신 기능 갱신: [완료 후 다음 진행 안내와 같은 요청 연결](06n-follow-up-and-linked-requests.md)을 PR #7로 반영했다. 직원이 상황을 선택하고 단계·다음 업무를 승인하며, 같은 업체의 요청을 비교·확인하여 한곳에서 관리한다. 현재는 규칙 기반이며 실제 AI 연결은 아니다. 별도 [AI 업무 정리 시연](06m-ai-workflow-demo.md)은 준비된 예시를 사용하는 체험 화면이다.
+
+2026-09-13 기능 배포 확인: [CI·시험 배포 실행 34746204954](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34746204954)의 2번째 시도가 성공했다. 기능 커밋은 `ef1f52014d29614d9b85aa0172cc9b94b9abedbf`이며 웹·API·worker·scheduler의 실행 상태와 버전을 검증했다. 현재 사이트는 [시험 CRM](https://web-staging-d005.up.railway.app/live)이다. 구현 시 로컬 검사 53개·타입·웹 빌드 및 실제 PostgreSQL 동시 변경 검사가 통과했다.
+
+남은 작업은 [배포·운영 검수 목록](06-first-release-checklist.md)으로 관리한다. 아래 구현 단위의 검사 개수와 대기 상태는 **각 전달 당시의 기록**이며 현재 상태는 이 문서 상단과 최신 기능 문서를 기준으로 확인한다.
 
 | 순서 | 현재 위치와 남은 일 |
 |---|---|
 | 6.1 MVP 범위 구축 | 핵심 CRM 저장·권한·변경 확인·누락 감지·로컬 알림·운영 기준·첫 연락 성과 구현. 실제 이메일·Emergent·AI 제공자 연결, 추가 운영 기능은 미완료 |
 | 6.2 검수 및 안정화 | 구현 단위마다 자동/화면 검수 진행. 로컬 백업·별도 DB 복원 검사 완료. 외부 연동 포함 전체 시나리오·부하·운영 PostgreSQL 백업/복구·동시 접속 검수는 남음 |
-| 6.3 배포(CI/CD) | 비공개 GitHub 저장소에 main/staging 업로드 완료. 첫 GitHub CI에서 앱·인프라·PostgreSQL 검사 통과. Railway 빈 API 서비스·싱가포르 설정 준비 중. 배포 가능한 서비스 이미지·운영 인증, staging 검수 및 본인 승인 후 production 배포는 남음 |
+| 6.3 배포(CI/CD) | 시험용 PostgreSQL 영구 볼륨·HTTPS 주소·초기 계정·GitHub Secrets 연결 완료. 웹/API/worker/scheduler의 컨테이너 검수 통과. staging 자동 배포·공개 주소의 로그인/접수/연락 저장/SSE/로그아웃 검수 완료. 운영 준비와 본인 승인 후 production 배포는 남음 |
 | 6.4 추가 구축 | 첫 MVP 전체 검수·배포 후 진행 |
 
 ## 구현·검수된 단위
@@ -28,7 +32,9 @@
 
 - [문의 조회 연결 추가](06j-emergent-export-polling.md): 회사별 HTTPS/Bearer 조회·크기/시간 제한·오류 처리, 60초 주기 실행·겹침 방지·종료 대기 구현. 전체 로컬 검사 **46개**, 타입 검사·웹 빌드 통과. 실제 Emergent 주소·토큰이 없어 외부 조회는 비활성이다.
 
-## 연결 대기
+## 시험 배포 연결 이력
+
+최초 시험 배포 연결: [클라우드 런타임](06l-staging-runtime.md)을 PR #3으로 staging에 반영했다. 로컬 검사 52개·타입·웹 빌드 및 GitHub의 실제 PostgreSQL 검사, 네 컨테이너 기동·로그인·접수·연락 완료·API 재생성 후 데이터 유지 검사가 통과했다. 시험 DB는 싱가포르 1개 인스턴스와 500MB 영구 볼륨으로 실행 중이다. 사용자가 배포 토큰과 상태 조회 토큰의 GitHub 암호화 저장을 각각 허용했으며 두 Secrets와 시험 배포 변수를 등록했다. [자동 배포 실행](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34716286686)은 3번째 시도에서 성공했다. 미배정 작업 재시도 후 Railway 기본 빌드 설정 문제를 확인해 시험 서비스에 Dockerfile·상태 확인 설정을 반영했다. 배포 커밋은 e12e6f6ad1d9258292eaf98a5c16b248c0ff9cdb이며 공개 HTTPS에서 Secure 로그인, 예시 접수, 연락 완료 저장, 재조회, SSE 연결, 로그아웃 후 세션 무효화를 확인했다. 웹·API·worker·scheduler 및 DB가 실행 중이다. 운영 배포는 비활성 상태다. 아래의 미연결·빈 서비스 표현은 이전 작업 당시의 기록이다.
 
 GitHub 준비 갱신: 비공개 저장소 `leemyeongjun11/customer-work-crm`의 main/staging에 초기 커밋 `e9a9e0a6ee4d68344dd1085d8d2978a37311ea18` 업로드와 원격 워크플로 등록을 확인했다. 2026-09-13 staging에서 [첫 CI 실행](https://github.com/leemyeongjun11/customer-work-crm/actions/runs/34712562594)을 요청했다. 배포 활성화 변수는 설정되지 않았다.
 

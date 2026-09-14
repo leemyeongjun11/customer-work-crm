@@ -3,15 +3,16 @@ import { ApiError, requireValue, fields, text, dayDeadline, timestamp, iso, kstD
 import { describeTask } from '../../../packages/domain/task-types.ts';
 import {validateInquiry,insertInquiry} from './intake.mjs';
 import {appendChange} from './changes.mjs';
+import {followUpService} from './follow-up.mjs';
 
 const closed = c => ['서비스 완료','종료'].includes(c.stage);
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])) : value;
 const hash = body => createHash('sha256').update(JSON.stringify(canonical(body))).digest('hex');
-const caseView = c => ({id:c.id,name:c.name,person:c.person,phone:c.phone,email:c.email,size:c.size,customerType:c.customer_type,requestMemo:c.request_memo??c.original.memo,stage:c.stage,assigneeId:c.assignee_id,assigneeName:c.assignee_name,original:c.original,receivedAt:iso(c.received_at),version:c.version});
+const caseView = c => ({id:c.id,name:c.name,person:c.person,phone:c.phone,email:c.email,size:c.size,customerType:c.customer_type,requestMemo:c.request_memo??c.original.memo,stage:c.stage,assigneeId:c.assignee_id,assigneeName:c.assignee_name,original:c.original,receivedAt:iso(c.received_at),version:c.version,followUp:c.follow_up,linkedCaseId:c.linked_case_id});
 const proposalView = p => ({id:p.id,type:p.type,reason:p.reason,status:p.status,proposedAssigneeId:p.proposed_assignee_id,version:p.version,caseVersion:p.case_version,createdAt:iso(p.created_at)});
 const taskView = t => ({id:t.id,caseId:t.case_id,title:t.title,taskType:t.task_type,description:t.description,kind:t.kind,status:t.status,excluded:t.excluded,dueAt:iso(t.due_at),originalDueAt:iso(t.original_due_at),completedAt:iso(t.completed_at),completedBy:t.completed_by,version:t.version,deadlineStatus:t.due_at?'known':'needs_confirmation'});
 
-export function createService(db, clock = () => new Date()) {
+export function createService(db, clock = () => new Date(), {aiEnv=process.env}={}) {
   const now = () => clock().toISOString();
   async function access(tx, user, id, lock = false) {
     requireValue(/^[0-9a-f-]{36}$/i.test(id), '영업건을 찾을 수 없습니다.',404);
@@ -59,6 +60,7 @@ export function createService(db, clock = () => new Date()) {
     requireValue(rows[0],'활성 상태인 같은 회사의 담당자를 선택해 주세요.');return rows[0];
   }
   return {
+    ...followUpService({db,access,once,version,audit,now,caseView,taskView,aiEnv}),
     async assignees(user) {
       requireValue(user.role==='admin','담당자 변경은 관리자만 할 수 있습니다.',403);
       const {rows}=await db.query('SELECT id,name,role FROM crm_users WHERE tenant_id=$1 AND active=true ORDER BY name,id',[user.tenantId]);return {items:rows};
@@ -153,17 +155,23 @@ export function createService(db, clock = () => new Date()) {
     },
     async cases(user, search = '') {
       requireValue(search.length <= 200,'검색어는 200자 이내로 입력해 주세요.');
-      const {rows} = await db.query("SELECT c.*,u.name AS assignee_name FROM crm_cases c JOIN crm_users u ON u.id=c.assignee_id WHERE c.tenant_id=$1 AND ($2='admin' OR c.assignee_id=$3) AND ($4='' OR strpos(lower(c.name || ' ' || c.person || ' ' || (c.original->>'memo') || ' ' || coalesce(c.request_memo,'')),lower($4))>0) ORDER BY c.received_at DESC,c.id DESC LIMIT 100",[user.tenantId,user.role,user.id,search]);
+      const {rows} = await db.query("SELECT c.*,u.name AS assignee_name FROM crm_cases c JOIN crm_users u ON u.id=c.assignee_id WHERE c.tenant_id=$1 AND ($2='admin' OR c.assignee_id=$3) AND c.linked_case_id IS NULL AND ($4='' OR EXISTS(SELECT 1 FROM crm_cases f WHERE f.tenant_id=c.tenant_id AND (f.id=c.id OR f.linked_case_id=c.id) AND strpos(lower(f.name || ' ' || f.person || ' ' || f.phone || ' ' || f.email || ' ' || (f.original->>'memo') || ' ' || coalesce(f.request_memo,'')),lower($4))>0)) ORDER BY c.received_at DESC,c.id DESC LIMIT 100",[user.tenantId,user.role,user.id,search]);
       return {items:rows.map(caseView),limit:100};
     },
     async detail(user,id) {
       return db.transaction(async tx => {
+        await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        requireValue(/^[0-9a-f-]{36}$/i.test(id),'영업건을 찾을 수 없습니다.',404);
+        const link=(await tx.query('SELECT linked_case_id FROM crm_cases WHERE id=$1 AND tenant_id=$2',[id,user.tenantId])).rows[0];
+        if(link?.linked_case_id){await access(tx,user,link.linked_case_id);return {redirectId:link.linked_case_id};}
         const c = await access(tx,user,id);
-        const tasks = await tx.query('SELECT * FROM crm_tasks WHERE tenant_id=$1 AND case_id=$2 ORDER BY created_at,id',[user.tenantId,id]);
-        const notes = await tx.query('SELECT n.*,u.name AS author FROM crm_notes n JOIN crm_users u ON u.id=n.author_id WHERE n.tenant_id=$1 AND n.case_id=$2 ORDER BY n.created_at DESC,n.id',[user.tenantId,id]);
-        const events = await tx.query("SELECT a.*,coalesce(u.name,'시스템') AS author FROM crm_audit a LEFT JOIN crm_users u ON u.id=a.actor_id WHERE a.tenant_id=$1 AND a.case_id=$2 ORDER BY a.created_at DESC,a.id LIMIT 100",[user.tenantId,id]);
+        const family=(await tx.query('SELECT c.*,u.name AS assignee_name FROM crm_cases c JOIN crm_users u ON u.id=c.assignee_id WHERE c.tenant_id=$1 AND (c.id=$2 OR c.linked_case_id=$2) ORDER BY c.received_at,c.id',[user.tenantId,id])).rows;
+        const ids=family.map(f=>f.id);
+        const tasks = await tx.query('SELECT * FROM crm_tasks WHERE tenant_id=$1 AND case_id=ANY($2::uuid[]) ORDER BY created_at,id',[user.tenantId,ids]);
+        const notes = await tx.query('SELECT n.*,u.name AS author FROM crm_notes n JOIN crm_users u ON u.id=n.author_id WHERE n.tenant_id=$1 AND n.case_id=ANY($2::uuid[]) ORDER BY n.created_at DESC,n.id',[user.tenantId,ids]);
+        const events = await tx.query("SELECT a.*,coalesce(u.name,'시스템') AS author FROM crm_audit a LEFT JOIN crm_users u ON u.id=a.actor_id WHERE a.tenant_id=$1 AND a.case_id=ANY($2::uuid[]) ORDER BY a.created_at DESC,a.id LIMIT 100",[user.tenantId,ids]);
         const proposals=await tx.query("SELECT * FROM crm_change_proposals WHERE tenant_id=$1 AND case_id=$2 AND status='pending' ORDER BY created_at,id",[user.tenantId,id]);
-        return {salesCase:caseView(c),proposals:proposals.rows.map(proposalView),tasks:tasks.rows.map(taskView),notes:notes.rows.map(n=>({id:n.id,body:n.body,author:n.author,at:iso(n.created_at)})),activities:events.rows.map(a=>({id:a.id,action:a.action,payload:a.payload,author:a.author,at:iso(a.created_at)}))};
+        return {salesCase:caseView(c),linkedContacts:family.filter(f=>f.id!==id).map(caseView),proposals:proposals.rows.map(proposalView),tasks:tasks.rows.map(taskView),notes:notes.rows.map(n=>({id:n.id,body:n.body,sourcePerson:family.find(f=>f.id===n.case_id)?.person,author:n.author,at:iso(n.created_at)})),activities:events.rows.map(a=>({id:a.id,action:a.action,sourcePerson:family.find(f=>f.id===a.case_id)?.person,payload:a.payload,author:a.author,at:iso(a.created_at)}))};
       });
     },
     async board(user) {
@@ -180,6 +188,7 @@ export function createService(db, clock = () => new Date()) {
       result.overdue.sort((a,b)=>Number(b.kind==='first')-Number(a.kind==='first') || Date.parse(a.dueAt)-Date.parse(b.dueAt));
       const missing=await db.query("SELECT c.*,u.name AS assignee_name FROM crm_cases c JOIN crm_users u ON u.id=c.assignee_id WHERE c.tenant_id=$1 AND ($2='admin' OR c.assignee_id=$3) AND c.stage NOT IN ('종료','서비스 완료') AND NOT EXISTS(SELECT 1 FROM crm_tasks t WHERE t.case_id=c.id AND t.status='incomplete' AND NOT t.excluded) ORDER BY c.received_at,c.id LIMIT 100",[user.tenantId,user.role,user.id]);
       result.missingNext=missing.rows.map(caseView);
+      result.pendingFollowUp=(await db.query("SELECT c.*,u.name AS assignee_name FROM crm_cases c JOIN crm_users u ON u.id=c.assignee_id WHERE c.tenant_id=$1 AND ($2='admin' OR c.assignee_id=$3) AND c.follow_up IS NOT NULL AND c.linked_case_id IS NULL AND c.stage NOT IN ('종료','서비스 완료') ORDER BY c.received_at,c.id LIMIT 100",[user.tenantId,user.role,user.id])).rows.map(caseView);
       result.attentionCount=(await db.query("SELECT count(*)::int AS n FROM crm_notification_jobs WHERE tenant_id=$1 AND ($2='admin' OR recipient_id=$3) AND status IN ('failed','blocked','unknown')",[user.tenantId,user.role,user.id])).rows[0].n;
       return result;
     },
@@ -201,6 +210,7 @@ export function createService(db, clock = () => new Date()) {
         version(c.version,body.expectedVersion); const noteId=randomUUID();
         await tx.query('INSERT INTO crm_notes(id,tenant_id,case_id,body,author_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',[noteId,user.tenantId,id,content,user.id,now()]);
         await tx.query('UPDATE crm_cases SET version=version+1 WHERE id=$1',[id]);
+        await tx.query('UPDATE crm_cases SET follow_up=$2 WHERE id=$1',[id,JSON.stringify({cause:'consultation',taskType:'',at:now()})]);
         await audit(tx,user.tenantId,id,user.id,'상담 메모 저장',{noteId});
         return {id:noteId,caseVersion:c.version+1};
       });
@@ -227,6 +237,7 @@ export function createService(db, clock = () => new Date()) {
           else await tx.query('UPDATE crm_tasks SET version=version+1 WHERE id=$1',[taskId]);
           if(outcome==='connected'&&c.stage==='접수')await tx.query("UPDATE crm_cases SET stage='상담 진행' WHERE id=$1",[caseId]);
           if(memo)await tx.query('INSERT INTO crm_notes(id,tenant_id,case_id,body,author_id,created_at) VALUES($1,$2,$3,$4,$5,$6)',[randomUUID(),user.tenantId,caseId,memo,user.id,now()]);
+          if(outcome!=='attempt')await tx.query('UPDATE crm_cases SET follow_up=$2 WHERE id=$1',[caseId,JSON.stringify({cause:action==='contact'?'consultation':'completed',taskType:t.task_type||'',title:t.title,at:now()})]);
           payload={before,outcome,actualAt,memo};
         } else if(action==='due') {
           requireValue(t.status==='incomplete'&&!t.excluded,'이미 처리된 업무입니다.',409);

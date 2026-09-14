@@ -29,13 +29,14 @@ export async function login(db, emailValue, password, now = new Date()) {
   return {token,user:publicUser(user)};
 }
 export function publicUser(user) { return {id:user.id,tenantId:user.tenant_id,name:user.name,email:user.email,role:user.role}; }
-export async function authenticate(db, cookie, now = new Date()) {
-  const token = /(?:^|;\s*)crm_session=([A-Za-z0-9_-]{43})(?:;|$)/.exec(cookie || '')?.[1];
+export async function authenticate(db, cookie, now = new Date(), secure = false) {
+  const pattern = secure ? /(?:^|;\s*)__Host-crm_session=([A-Za-z0-9_-]{43})(?:;|$)/ : /(?:^|;\s*)crm_session=([A-Za-z0-9_-]{43})(?:;|$)/;
+  const token = pattern.exec(cookie || '')?.[1];
   if (!token) throw new ApiError(401,'로그인이 필요합니다.');
   const {rows} = await db.query('SELECT u.* FROM crm_users u JOIN crm_sessions s ON s.user_id=u.id WHERE s.token_hash=$1 AND s.expires_at>$2 AND u.active=true', [digest(token),now.toISOString()]);
   if (!rows[0]) throw new ApiError(401,'로그인이 만료되었습니다. 다시 로그인해 주세요.');
   return {...publicUser(rows[0]),tokenHash:digest(token)};
 }
-export function sessionCookie(token, clear = false) {
-  return `crm_session=${clear ? '' : token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${clear ? 0 : 28800}`;
+export function sessionCookie(token, clear = false, secure = false) {
+  return `${secure ? '__Host-' : ''}crm_session=${clear ? '' : token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${clear ? 0 : 28800}${secure ? '; Secure' : ''}`;
 }

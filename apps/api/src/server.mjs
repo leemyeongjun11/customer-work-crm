@@ -16,6 +16,8 @@ import {backupService} from './backup.mjs';
 import {accountService} from './accounts.mjs';
 import {readExportConnections,exportPageFetcher} from './emergent-export.mjs';
 import {startRecoveryPolling} from '../../scheduler/src/recovery-polling.mjs';
+import {sameSecret,rateLimit,deploymentStatus} from './cloud.mjs';
+import {createAiSuggestions} from './ai-suggestions.mjs';
 
 const dist = fileURLToPath(new URL('../../web/dist/',import.meta.url));
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
@@ -29,14 +31,16 @@ async function jsonBody(req) {
   const raw=await rawJsonBody(req);
   try {return JSON.parse(raw.toString('utf8'));} catch {throw new ApiError(400,'JSON 내용을 확인해 주세요.');}
 }
-export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[],eventPollMs=1000,recoveryFetchPage,backupDirectory}={}) {
-  const service=createService(db,clock),notifications=notificationService(db,clock),operations=operationService(db,clock);const buckets=new Map();
+export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[],eventPollMs=1000,recoveryFetchPage,backupDirectory,cloud,health,ai={}}={}) {
+  const service=createService(db,clock,{aiEnv:ai.env}),notifications=notificationService(db,clock),operations=operationService(db,clock);const buckets=new Map();
+  const aiSuggestions=createAiSuggestions({service,clock,...ai});
   const ingestion=ingestionService(db,{clock,keys:webhookKeys});
-  const streams=createChangeStreams(db,{clock,pollMs:eventPollMs});
+  const streams=createChangeStreams(db,{clock,pollMs:eventPollMs,secureSession:!!cloud});
   const recovery=recoveryService(db,{clock,fetchPage:recoveryFetchPage});
   const backups=backupService(db,{clock,directory:backupDirectory});
   const accounts=accountService(db,clock);
-  function limit(req,kind,maximum) {
+  async function limit(req,kind,maximum) {
+    if(cloud)return rateLimit(db,`${cloud.proxyToken}:${kind}:${req.headers['x-crm-client']||'unknown'}`,maximum);
     const at=Date.now(),key=`${kind}:${req.socket.remoteAddress}`;
     for(const [k,v]of buckets)if(v.until<at)buckets.delete(k);
     const bucket=buckets.get(key)||{count:0,until:at+60000};bucket.count++;buckets.set(key,bucket);
@@ -49,11 +53,18 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
     res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
     try {
       const host=req.headers.host||'';
-      requireValue(/^(127\.0\.0\.1|localhost):\d+$/.test(host),'로컬 검수 주소로 접속해 주세요.',403);
-      const origin=allowedOrigin || `http://${host}`;
-      const url=new URL(req.url,origin); const path=url.pathname;
+      if(!cloud)requireValue(/^(127\.0\.0\.1|localhost):\d+$/.test(host),'로컬 검수 주소로 접속해 주세요.',403);
+      const origin=cloud?.origin || allowedOrigin || `http://${host}`;
+      const url=new URL(req.url,origin);
+      if(cloud&&url.pathname==='/health/ready'&&req.method==='GET')return reply(200,await health());
+      if(cloud)requireValue(sameSecret(req.headers['x-crm-proxy-token'],cloud.proxyToken),'허용된 서비스 경로로 접속해 주세요.',403);
+      const path=cloud&&url.pathname.startsWith('/v1/')?`/api${url.pathname}`:url.pathname;
+      if(cloud&&path==='/internal/ops/release'&&req.method==='GET'){
+        requireValue(sameSecret(req.headers.authorization,`Bearer ${cloud.opsToken}`),'인증이 필요합니다.',401);
+        return reply(200,await deploymentStatus(db));
+      }
       if(path==='/api/v1/integrations/emergent/inquiries'&&req.method==='POST'){
-        limit(req,'webhook',120);
+        await limit(req,'webhook',120);
         let result;
         try {result=await ingestion.receive(req.headers,await rawJsonBody(req));}
         catch(error){if(error instanceof ApiError)throw error;console.error('Inquiry ingestion failed',error.name,error.code||'');throw new ApiError(503,'문의 저장에 실패했습니다. 동일한 이벤트 ID로 다시 전송해 주세요.');}
@@ -63,18 +74,20 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
       if(path==='/health/ready'){await db.query('SELECT 1');return reply(200,{status:'ok',role:'api',mode:'local-mvp',database:db.driver,productionReady:false});}
       const prefix='/api/v1';
       if(path.startsWith(`${prefix}/`)) {
-        limit(req,'api',300);
+        await limit(req,'api',300);
         if(path===`${prefix}/auth/login`&&req.method==='POST') {
-          limit(req,'login',10);const body=await jsonBody(req);fields(body,['email','password']);
-          const result=await login(db,body.email,body.password,clock());res.setHeader('Set-Cookie',sessionCookie(result.token));return reply(200,{user:result.user});
+          await limit(req,'login',10);const body=await jsonBody(req);fields(body,['email','password']);
+          const result=await login(db,body.email,body.password,clock());res.setHeader('Set-Cookie',sessionCookie(result.token,false,!!cloud));return reply(200,{user:result.user});
         }
         const intake=/^\/api\/v1\/public\/inquiries\/([a-z0-9-]{1,64})$/.exec(path);
         if(intake) {
           if(req.method==='GET')return reply(200,await service.publicInfo(intake[1]));
-          if(req.method==='POST'){limit(req,'intake',15);return reply(201,await service.intake(intake[1],await jsonBody(req),req.headers['idempotency-key']));}
+          if(req.method==='POST'){await limit(req,'intake',15);return reply(201,await service.intake(intake[1],await jsonBody(req),req.headers['idempotency-key']));}
           throw new ApiError(405,'지원하지 않는 요청입니다.');
         }
-        const user=await authenticate(db,req.headers.cookie,clock());
+        const user=await authenticate(db,req.headers.cookie,clock(),!!cloud);
+        if(path===`${prefix}/ai/status`&&req.method==='GET')return reply(200,aiSuggestions.status());
+        if(cloud&&path.startsWith(`${prefix}/admin/backups`))throw new ApiError(503,'시험 환경의 원격 백업 저장소는 아직 연결 전입니다. 운영 전 별도 검수가 필요합니다.');
         if(path===`${prefix}/admin/users`&&req.method==='GET')return reply(200,await accounts.list(user));
         const accountRoute=/^\/api\/v1\/admin\/users\/([0-9a-f-]{36})\/(preview|status)$/.exec(path);
         if(accountRoute){const [,id,action]=accountRoute;
@@ -84,12 +97,12 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
         if(path===`${prefix}/events`&&req.method==='GET')return await streams.open(req,res,user);
         if(path===`${prefix}/admin/backups`&&req.method==='GET')return reply(200,await backups.list(user));
         if(path===`${prefix}/admin/backups`&&req.method==='POST'){
-          requireValue(user.role==='admin','백업은 관리자만 관리할 수 있습니다.',403);limit(req,'backup',3);
+          requireValue(user.role==='admin','백업은 관리자만 관리할 수 있습니다.',403);await limit(req,'backup',3);
           return reply(200,await backups.create(user,await jsonBody(req),req.headers['idempotency-key']));
         }
         if(path===`${prefix}/admin/integrations/emergent`&&req.method==='GET')return reply(200,await recovery.status(user));
         if(path===`${prefix}/admin/integrations/emergent/recover`&&req.method==='POST'){
-          requireValue(user.role==='admin','연동 복구는 관리자만 실행할 수 있습니다.',403);fields(await jsonBody(req),[]);limit(req,'recovery',5);
+          requireValue(user.role==='admin','연동 복구는 관리자만 실행할 수 있습니다.',403);fields(await jsonBody(req),[]);await limit(req,'recovery',5);
           return reply(200,await recovery.run(user.tenantId));
         }
         if(path===`${prefix}/admin/integrations/emergent/resume`&&req.method==='POST'){
@@ -97,14 +110,14 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           return reply(200,await recovery.resume(user));
         }
         if(path===`${prefix}/auth/me`&&req.method==='GET'){const {tokenHash,...visible}=user;return reply(200,{user:visible});}
-        if(path===`${prefix}/auth/logout`&&req.method==='POST'){await db.query('DELETE FROM crm_sessions WHERE token_hash=$1',[user.tokenHash]);res.setHeader('Set-Cookie',sessionCookie('',true));return reply(200,{ok:true});}
+        if(path===`${prefix}/auth/logout`&&req.method==='POST'){await db.query('DELETE FROM crm_sessions WHERE token_hash=$1',[user.tokenHash]);res.setHeader('Set-Cookie',sessionCookie('',true,!!cloud));return reply(200,{ok:true});}
         if(path===`${prefix}/workboard`&&req.method==='GET')return reply(200,await service.board(user));
         if(path===`${prefix}/admin/settings`&&req.method==='GET')return reply(200,await operations.settings(user));
         if(path===`${prefix}/admin/settings`&&req.method==='PATCH')return reply(200,await operations.updateSettings(user,await jsonBody(req),req.headers['idempotency-key']));
         if(path===`${prefix}/metrics/first-contact`&&req.method==='GET')return reply(200,await operations.firstContactMetrics(user,{from:url.searchParams.get('from'),to:url.searchParams.get('to')}));
         if(path===`${prefix}/notifications`&&req.method==='GET')return reply(200,await notifications.inbox(user));
         if(path===`${prefix}/notifications/review`&&req.method==='POST'){
-          fields(await jsonBody(req),[]);limit(req,'review',10);
+          fields(await jsonBody(req),[]);await limit(req,'review',10);
           return reply(202,await notifications.reviewNow(user,req.headers['idempotency-key']));
         }
         if(path===`${prefix}/assignees`&&req.method==='GET')return reply(200,await service.assignees(user));
@@ -115,13 +128,20 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
           if(action==='preview'&&req.method==='GET')return reply(200,await service.previewChange(user,id));
           if(['approve','reject'].includes(action)&&req.method==='POST')return reply(200,await service.decideChange(user,id,action,await jsonBody(req),req.headers['idempotency-key']));
         }
-        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals))?$/.exec(path);
+        const caseRoute=/^\/api\/v1\/cases\/([0-9a-f-]+)(?:\/(tasks|notes|contacts|stage|change-proposals|related|link|follow-up|ai-suggestion))?$/.exec(path);
         if(caseRoute) {
           const [,id,action]=caseRoute;
+          if(action==='related'&&req.method==='GET')return reply(200,await service.relatedCases(user,id));
           if(!action&&req.method==='GET')return reply(200,await service.detail(user,id));
           if(!action&&req.method==='PATCH')return reply(200,await service.updateCustomer(user,id,await jsonBody(req),req.headers['idempotency-key']));
           if(req.method==='POST'&&action){
             const body=await jsonBody(req),key=req.headers['idempotency-key'];
+            if(action==='ai-suggestion'){
+              await limit(req,'ai-suggestion',2);
+              return reply(200,await aiSuggestions.suggest(user,id,body));
+            }
+            if(action==='link')return reply(200,await service.linkCases(user,id,body,key));
+            if(action==='follow-up')return reply(200,await service.followUp(user,id,body,key));
             if(action==='tasks')return reply(201,await service.addTask(user,id,body,key));
             if(action==='notes')return reply(201,await service.addNote(user,id,body,key));
             if(action==='contacts')return reply(201,await service.updateTask(user,id,body.taskId,'contact',body,key));
@@ -139,6 +159,7 @@ export function makeServer(db, {clock=()=>new Date(),allowedOrigin,webhookKeys=[
         }
         throw new ApiError(404,'아직 연결되지 않았거나 존재하지 않는 API입니다.');
       }
+      if(cloud)throw new ApiError(404,'존재하지 않는 API입니다.');
       requireValue(req.method==='GET'||req.method==='HEAD','지원하지 않는 요청입니다.',405);
       if(path==='/'){res.writeHead(302,{Location:'/live'});res.end();return;}
       const asset=path.startsWith('/assets/');

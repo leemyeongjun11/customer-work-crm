@@ -50,7 +50,7 @@ async function compose(tx,job,at){
     if(!c.owner_active||['종료','서비스 완료'].includes(c.stage))return null;
     const first=(await tx.query("SELECT due_at,status,excluded FROM crm_tasks WHERE case_id=$1 AND kind='first'",[c.id])).rows[0];
     if(!first||first.status==='complete'||first.excluded)return null;
-    return {recipient:c.owner_email,recipientId:c.assignee_id,subject:`신규 상담 배정 · ${c.name}`,body:`담당자: ${c.owner_name}\n고객: ${c.name}\n업무: 신규 상담 첫 연락\n기한: ${displayDate(first.due_at)}\nhttp://127.0.0.1:4180/live/cases/${c.id}`};
+    return {recipient:c.owner_email,recipientId:c.assignee_id,subject:`신규 상담 배정 · ${c.name}`,body:`담당자: ${c.owner_name}\n고객: ${c.name}\n업무: 신규 상담 첫 연락\n기한: ${displayDate(first.due_at)}\n${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${c.id}`};
   }
   const user=(await tx.query('SELECT * FROM crm_users WHERE id=$1 AND tenant_id=$2 AND active=true',[job.recipient_id,job.tenant_id])).rows[0];if(!user)return null;
   const day=kstDate(at),scheduled=job.kind!=='review';
@@ -65,8 +65,8 @@ async function compose(tx,job,at){
   const noDate=job.kind==='review'?rows.filter(t=>!t.due_at):[];
   if(!tasks.length&&!missing.length&&!noDate.length)return null;
   const title=job.kind==='first_reminder'?'오늘 마감 첫 연락 알림':job.kind==='review'?'현재 업무 알림 미리보기':'오늘 업무 통합 알림';
-  const items=tasks.map(t=>`- ${t.name} / ${t.title} / ${displayDate(t.due_at)}\n  http://127.0.0.1:4180/live/cases/${t.case_id}`);
-  items.push(...noDate.map(t=>`- [기한 확인 필요] ${t.name} / ${t.title}\n  http://127.0.0.1:4180/live/cases/${t.case_id}`),...missing.map(c=>`- [다음 행동 없음] ${c.name}\n  http://127.0.0.1:4180/live/cases/${c.id}`));
+  const items=tasks.map(t=>`- ${t.name} / ${t.title} / ${displayDate(t.due_at)}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${t.case_id}`);
+  items.push(...noDate.map(t=>`- [기한 확인 필요] ${t.name} / ${t.title}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${t.case_id}`),...missing.map(c=>`- [다음 할 일 등록 필요] ${c.name}\n  ${process.env.PUBLIC_APP_URL || 'http://127.0.0.1:4180'}/live/cases/${c.id}`));
   return {recipient:user.email,recipientId:user.id,subject:`${title} · ${items.length}건`,body:`${user.name}님, 아래 업무를 확인해 주세요.\n\n${items.join('\n\n')}`};
 }
 function displayDate(value){return new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date(value));}
