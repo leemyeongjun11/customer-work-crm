@@ -18,7 +18,9 @@ function call(path,{method='GET',body,cookie,authorization}={}){return new Promi
 try{
   docker('network','create',network);
   const pg=start('postgres','postgres:17-bookworm@sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0',['--network-alias','postgres'],{POSTGRES_USER:'crm',POSTGRES_DB:'crm_ci',POSTGRES_PASSWORD:password});
-  await until(()=>{docker('exec',pg,'pg_isready','-U','crm','-d','crm_ci');return true;},'PostgreSQL');
+  // The image's temporary initialization server accepts socket connections only.
+  // Wait for the final TCP server before starting API/worker/scheduler clients.
+  await until(()=>{docker('exec',pg,'pg_isready','-h','127.0.0.1','-U','crm','-d','crm_ci');return true;},'PostgreSQL TCP');
   for(const role of ['api','worker','scheduler'])start(role,`crm-${role}:${release.revision}`,['--network-alias',`${role}.railway.internal`],env);
   start('web',`crm-web:${release.revision}`,['--publish','127.0.0.1:18089:8080'],env);
   await until(async()=>{const r=await call('/api/health/ready');return r.status===200&&r.json().revision===release.revision;},'API readiness');
@@ -35,5 +37,11 @@ try{
   assert.equal((await call('/api/internal/ops/release')).status,401);
   await until(async()=>{const r=await call('/api/internal/ops/release',{authorization:`Bearer ${ops}`});return r.status===200&&readyComponents(r.json(),release.revision,release.releaseId);},'all runtime roles');
   console.log('Four real containers passed login, intake, contact, persistent restart and release-heartbeat verification.');
-}catch(error){for(const id of containers){try{console.error(`${id}:\n${docker('logs','--tail','30',id)}`);}catch{}}throw error;
+}catch(error){
+  for(const id of containers){
+    try{console.error(`${id}: ${docker('inspect','--format','running={{.State.Running}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}',id)}`);}catch{}
+    // Docker writes application stderr to stderr; preserve both streams on failure.
+    try{execFileSync('docker',['logs','--tail','30',id],{timeout:10000,stdio:'inherit'});}catch{}
+  }
+  throw error;
 }finally{for(const id of containers){try{docker('rm','--force',id);}catch{}}try{docker('network','rm',network);}catch{}}
